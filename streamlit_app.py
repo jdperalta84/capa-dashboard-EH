@@ -6,8 +6,6 @@ Run with:  streamlit run streamlit_app.py
 
 import streamlit as st
 import pandas as pd
-import glob
-import os
 import io
 import warnings
 from datetime import date
@@ -20,7 +18,6 @@ warnings.filterwarnings("ignore", category=UserWarning)
 # ── Page config ───────────────────────────────────────────────────────────────
 st.set_page_config(page_title="CAPA KPI Dashboard", layout="wide")
 
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 TODAY = date.today()
 OPEN_THRESHOLD_DAYS = 90
 
@@ -71,22 +68,18 @@ def autofit(ws, max_w=40, min_w=10):
 
 
 # ── Data loading ──────────────────────────────────────────────────────────────
-@st.cache_data
-def load_data():
-    """Load all export_CAPA *.xls files and return a merged DataFrame."""
-    files = sorted(glob.glob(os.path.join(SCRIPT_DIR, "export_CAPA *.xls")))
-    if not files:
-        return None, []
-
+def load_data(uploaded_files):
+    """Parse uploaded export_CAPA *.xls files and return a merged DataFrame."""
     capas_frames = []
-    for filepath in files:
+    for uploaded in uploaded_files:
+        # Derive location name from filename: "export_CAPA SomeSite.xls" → "SomeSite"
         location = (
-            os.path.basename(filepath)
+            uploaded.name
             .replace("export_CAPA ", "")
             .replace(".xls", "")
         )
 
-        capas = pd.read_excel(filepath, sheet_name="Capas")
+        capas = pd.read_excel(uploaded, sheet_name="Capas")
         capas["Location"] = location
         capas["Date of notification"] = pd.to_datetime(
             capas["Date of notification"], dayfirst=True, errors="coerce"
@@ -95,7 +88,7 @@ def load_data():
             capas["Date closed"], dayfirst=True, errors="coerce"
         )
 
-        taken = pd.read_excel(filepath, sheet_name="Taken")
+        taken = pd.read_excel(uploaded, sheet_name="Taken")
         taken["Date of completion"] = pd.to_datetime(
             taken["Date of completion"], dayfirst=True, errors="coerce"
         )
@@ -499,14 +492,18 @@ def build_excel_report(metrics, method):
 st.title("CAPA KPI Dashboard")
 st.caption(f"Report date: {TODAY.strftime('%B %d, %Y')}")
 
-all_capas, locations = load_data()
+uploaded_files = st.file_uploader(
+    "Upload your export_CAPA .xls files",
+    type=["xls"],
+    accept_multiple_files=True,
+    help="Select one or more `export_CAPA *.xls` files exported from your CAPA system.",
+)
 
-if all_capas is None:
-    st.error(
-        f"No files found matching `export_CAPA *.xls` in\n`{SCRIPT_DIR}`.\n\n"
-        "Place your export files in the same folder as this script and reload."
-    )
+if not uploaded_files:
+    st.info("Upload one or more `export_CAPA *.xls` files to get started.")
     st.stop()
+
+all_capas, locations = load_data(uploaded_files)
 
 # ── Sidebar ───────────────────────────────────────────────────────────────────
 st.sidebar.header("Settings")
