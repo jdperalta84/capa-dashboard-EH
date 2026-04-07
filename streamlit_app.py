@@ -12,6 +12,7 @@ from datetime import date
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
+import altair as alt
 
 warnings.filterwarnings("ignore", category=UserWarning)
 
@@ -69,9 +70,15 @@ def autofit(ws, max_w=40, min_w=10):
 
 # ── Data loading ──────────────────────────────────────────────────────────────
 def load_data(uploaded_files):
-    """Parse uploaded export_CAPA *.xls files and return a merged DataFrame."""
+    """Parse uploaded export_CAPA *.xls files and return a merged DataFrame.
+    Shows a progress bar while processing multiple files.
+    """
+    # Progress bar (Streamlit UI)
+    progress = st.progress(0)
+    total = len(uploaded_files)
+
     capas_frames = []
-    for uploaded in uploaded_files:
+    for i, uploaded in enumerate(uploaded_files, 1):
         # Derive location name from filename: "export_CAPA SomeSite.xls" → "SomeSite"
         location = (
             uploaded.name
@@ -108,7 +115,10 @@ def load_data(uploaded_files):
 
         capas["Effective closed date"] = capas.apply(resolve_closed_date, axis=1)
         capas_frames.append(capas)
+        # Update progress bar
+        progress.progress(i / total)
 
+    progress.empty()
     all_capas = pd.concat(capas_frames, ignore_index=True)
     locations = sorted(all_capas["Location"].unique().tolist())
     return all_capas, locations
@@ -547,6 +557,27 @@ c4, c5, c6 = st.columns(3)
 c4.metric("Total Closed in 2026", f"{metrics['closed_2026']:,}")
 c5.metric("Currently Open", f"{metrics['open']:,}")
 c6.metric(f"Open > {OPEN_THRESHOLD_DAYS} Days", f"{metrics['open_gt90']:,}")
+
+# ----- Trend chart (average days to close per month) -----
+trend_df = (
+    filtered.assign(month=filtered["Date closed"].dt.to_period("M"))
+    .groupby("month")
+    .apply(lambda d: (d["Date closed"] - d["Date of notification"]).dt.days.mean())
+    .reset_index(name="avg_days")
+)
+trend_df["month"] = trend_df["month"].dt.to_timestamp()
+
+trend_chart = (
+    alt.Chart(trend_df)
+    .mark_line(point=True, color=f"#{MED_BLUE}")
+    .encode(
+        x=alt.X("month:T", title="Month"),
+        y=alt.Y("avg_days:Q", title="Avg days to close"),
+    )
+    .properties(width=700, height=300, title="Close‑time trend")
+)
+st.altair_chart(trend_chart, use_container_width=True)
+st.caption("Average days from notification to closure, aggregated by month.")
 
 # ── Location table ────────────────────────────────────────────────────────────
 st.subheader("Performance by Location")
