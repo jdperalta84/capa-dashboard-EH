@@ -92,11 +92,16 @@ for filepath in files:
 
         if num in task_groups.groups:
             group = task_groups.get_group(num)
+            # If any task is not completed, treat the CAPA as open
+            incomplete = group[~group["Completed"].str.strip().str.lower().eq("yes")]
+            if not incomplete.empty:
+                return pd.NaT  # Open due to incomplete tasks
+            # All tasks are completed; use latest completion date if available
             completed = group[group["Completed"].str.strip().str.lower() == "yes"]
             max_date = completed["Date of completion"].dropna().max()
             if pd.notna(max_date):
                 return max_date   # latest completed task date
-            # no completed tasks with dates → fall back to Capas sheet
+            # No completed tasks with dates → fall back to Capas sheet
         return capas_date
 
     capas["Effective closed date"] = capas.apply(resolve_closed_date, axis=1)
@@ -105,12 +110,12 @@ for filepath in files:
 all_capas = pd.concat(capas_frames, ignore_index=True)
 
 # ── Derived flags ─────────────────────────────────────────────────────────────
-# Open/closed determined solely by Date closed on the Capas main tab
-is_closed = all_capas["Date closed"].notna()
+# Open/closed determined by Effective closed date (taking task completion into account)
+is_closed = all_capas["Effective closed date"].notna()
 is_open   = ~is_closed
 
-closed_2025 = is_closed & (all_capas["Date closed"].dt.year == 2025)
-closed_2026 = is_closed & (all_capas["Date closed"].dt.year == 2026)
+closed_2025 = is_closed & (all_capas["Effective closed date"].dt.year == 2025)
+closed_2026 = is_closed & (all_capas["Effective closed date"].dt.year == 2026)
 
 days_open = (pd.Timestamp(TODAY) - all_capas["Date of notification"]).dt.days
 open_gt90 = is_open & (days_open > OPEN_THRESHOLD_DAYS)
@@ -118,7 +123,7 @@ open_gt90 = is_open & (days_open > OPEN_THRESHOLD_DAYS)
 # ── Avg days to close ─────────────────────────────────────────────────────────
 def avg_days(mask):
     df = all_capas[mask].copy()
-    df["days_to_close"] = (df["Date closed"] - df["Date of notification"]).dt.days
+    df["days_to_close"] = (df["Effective closed date"] - df["Date of notification"]).dt.days
     vals = df["days_to_close"].dropna()
     return vals.mean() if not vals.empty else float("nan")
 
