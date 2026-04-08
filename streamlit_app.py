@@ -128,6 +128,7 @@ def load_data(uploaded_files):
             return capas_date
 
         capas["Effective closed date"] = capas.apply(resolve_closed_date, axis=1)
+        capas["Effective closed date"] = pd.to_datetime(capas["Effective closed date"], errors="coerce")
         capas_frames.append(capas)
         # Update progress bar
         progress.progress(i / total)
