@@ -37,7 +37,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 - **`streamlit_app.py`** – the sole entry point for the Streamlit web‑app.
   - **UI layout** – top‑level title, sidebar for settings (calculation method, location filter), KPI cards, location table, detail tabs, and download sections.
-  - **Data ingestion** – `load_data(uploaded_files)` reads the user‑uploaded `export_CAPA *.xls` files, extracts the location from the filename, parses the `Capas` and `Taken` sheets, and resolves an *effective closed date* using task completion dates when available. A progress bar (`st.progress`) provides feedback during multi‑file uploads.
+  - **Data ingestion** – `load_data(uploaded_files)` reads the user‑uploaded `export_CAPA *.xls` files, extracts the location from the filename, parses the `Capas` and `Taken` sheets, and resolves an *effective closed date* using task completion dates when available. **If any task in the Taken sheet is not marked `Completed = Yes`, the CAPA is considered open; only when all tasks are completed does the CAPA close on the latest task completion date.** A progress bar (`st.progress`) provides feedback during multi‑file uploads.
   - **Metric calculation** – `compute_metrics(all_capas, method)` computes KPI aggregates (average days to close, totals per year, open counts, open > threshold) and assembles per‑location and detailed DataFrames.
   - **Excel report generation** – `build_excel_report(metrics, method)` creates a fully styled workbook (Dashboard, By Location, Summary, Logic Notes, and a detail sheet per KPI) using `openpyxl`.
   - **Trend visualization** – a small Altair line chart (average days to close per month) is rendered after the KPI cards to give a quick visual trend.

@@ -87,6 +87,20 @@ def load_data(uploaded_files):
         )
 
         capas = pd.read_excel(uploaded, sheet_name="Capas")
+        # Keep only selected CAPA types
+        _include = [
+            "Client Complaint", "Client complaint",
+            "Customer Complaint", "Customer complaint",
+            "Site complaint",
+            "PT Outlier",
+            "Proficiency Testing Outlier",
+            "Proficiency test and Round Robins",
+            "Internal Audit",
+        ]
+        if "Type" in capas.columns:
+            mask = capas["Type"].astype(str).str.strip().str.lower().isin([e.lower() for e in _include])
+            capas = capas[mask]
+
         capas["Location"] = location
         capas["Date of notification"] = pd.to_datetime(
             capas["Date of notification"], dayfirst=True, errors="coerce"
@@ -397,6 +411,8 @@ def build_excel_report(metrics, method):
              "Using task dates produces lower avg days figures.", False),
             ("Known trade-off: more CAPAs counted as closed",
              "CAPAs with completed tasks but no Date closed on the Capas tab are counted as closed here.", False),
+            ("CAPA type filtering",
+             "Only CAPAs whose 'Type' matches the selected categories are retained.", False),
         ]
     else:
         logic_content = [
@@ -408,6 +424,8 @@ def build_excel_report(metrics, method):
              "formally reviewed and closed.", False),
             ("Consistency and auditability",
              "The Capas tab Date closed is a single, unambiguous field.", False),
+            ("CAPA type filtering",
+                 "Only CAPAs whose 'Type' matches the selected categories are retained.", False),
         ]
 
     logic_content += [
