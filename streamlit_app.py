@@ -8,6 +8,7 @@ import streamlit as st
 import pandas as pd
 import io
 import warnings
+import xlrd
 from datetime import date
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
@@ -86,8 +87,22 @@ def load_data(uploaded_files):
             .replace(".xls", "")
         )
 
+        # Open the .xls workbook with corruption tolerance so that
+        # files exported from the CAPA system (which sometimes have minor
+        # compound-document irregularities) can still be read.
         try:
-            capas = pd.read_excel(uploaded, sheet_name="Capas")
+            raw_bytes = uploaded.read()
+            uploaded.seek(0)  # reset for any later use
+            wb = xlrd.open_workbook(
+                file_contents=raw_bytes,
+                ignore_workbook_corruption=True,
+            )
+        except Exception as e:
+            st.error(f"Failed to open workbook for {uploaded.name}: {e}")
+            continue
+
+        try:
+            capas = pd.read_excel(wb, sheet_name="Capas", engine="xlrd")
         except Exception as e:
             st.error(f"Failed to read 'Capas' sheet: {e}")
             continue
@@ -114,7 +129,7 @@ def load_data(uploaded_files):
         )
 
         try:
-            taken = pd.read_excel(uploaded, sheet_name="Taken")
+            taken = pd.read_excel(wb, sheet_name="Taken", engine="xlrd")
         except Exception as e:
             st.error(f"Failed to read 'Taken' sheet: {e}")
             continue
