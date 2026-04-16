@@ -142,6 +142,9 @@ def load_data(uploaded_files):
         progress.progress(i / total)
 
     progress.empty()
+    if not capas_frames:
+        st.error("No CAPA data could be loaded. Please check your files.")
+        return pd.DataFrame(), []
     all_capas = pd.concat(capas_frames, ignore_index=True)
     locations = sorted(all_capas["Location"].unique().tolist())
     return all_capas, locations
