@@ -87,10 +87,10 @@ def load_data(uploaded_files):
         )
 
         try:
-    capas = pd.read_excel(uploaded, sheet_name="Capas")
-except Exception as e:
-    st.error(f"Failed to read 'Capas' sheet: {e}")
-    continue
+            capas = pd.read_excel(uploaded, sheet_name="Capas")
+        except Exception as e:
+            st.error(f"Failed to read 'Capas' sheet: {e}")
+            continue
         # Keep only selected CAPA types
         _include = [
             "Client Complaint", "Client complaint",
@@ -114,10 +114,10 @@ except Exception as e:
         )
 
         try:
-    taken = pd.read_excel(uploaded, sheet_name="Taken")
-except Exception as e:
-    st.error(f"Failed to read 'Taken' sheet: {e}")
-    continue
+            taken = pd.read_excel(uploaded, sheet_name="Taken")
+        except Exception as e:
+            st.error(f"Failed to read 'Taken' sheet: {e}")
+            continue
         taken["Date of completion"] = pd.to_datetime(
             taken["Date of completion"], dayfirst=True, errors="coerce"
         )
