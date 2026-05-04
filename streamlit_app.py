@@ -226,8 +226,19 @@ def load_data(uploaded_files):
                 headers = None
                 for row_idx, row in enumerate(ws.iter_rows(values_only=True), start=1):
                     if row_idx == 1:
-                        # Use English headers (row 1)
-                        headers = [str(h).strip() if h else "" for h in row]
+                        raw = [str(h).strip() if h is not None else "" for h in row]
+                        # Make headers unique and non-empty so DataFrame construction
+                        # and later column lookups don't collide or fail.
+                        seen = {}
+                        headers = []
+                        for h in raw:
+                            base = h or "_unnamed"
+                            if base in seen:
+                                seen[base] += 1
+                                headers.append(f"{base}__{seen[base]}")
+                            else:
+                                seen[base] = 0
+                                headers.append(base)
                         continue
                     if row_idx == 2:
                         # Skip Spanish translation row
@@ -248,21 +259,30 @@ def load_data(uploaded_files):
                 # Build DataFrame with normalized column names
                 capas = pd.DataFrame(car_data, columns=headers)
 
-                # Normalize column names - find the key columns by pattern matching
+                # Normalize column names - find the key columns by pattern matching.
+                # Patterns are intentionally permissive so common header variants
+                # ("Date Closed", "Closed Date", "Notification Date", etc.) all map.
                 col_map = {}
                 for col in capas.columns:
-                    col_lower = col.lower()
+                    col_lower = col.lower().strip()
+                    if not col_lower or col_lower.startswith("_unnamed"):
+                        continue
                     if "location" in col_lower and "id" not in col_lower:
                         col_map[col] = "Location"
-                    elif "initialized" in col_lower and "date" in col_lower:
+                    elif (
+                        "initialized" in col_lower
+                        or "notification" in col_lower
+                        or "open date" in col_lower
+                        or "date opened" in col_lower
+                    ):
                         col_map[col] = "Date of notification"
-                    elif "effectiveness" in col_lower and "closed" in col_lower:
+                    elif "closed" in col_lower and ("date" in col_lower or "effective" in col_lower):
                         col_map[col] = "Date closed"
                     elif "complete corrective" in col_lower or "approved date" in col_lower:
                         col_map[col] = "Complete corrective actions (Approved Date)"
-                    elif "car #" in col_lower or "car number" in col_lower:
+                    elif "car #" in col_lower or "car number" in col_lower or col_lower in ("number", "id", "car id"):
                         col_map[col] = "Number"
-                    elif col_lower == "car type" or "car type" in col_lower:
+                    elif "car type" in col_lower or col_lower == "type":
                         col_map[col] = "Type"
                     elif "brief description" in col_lower or ("nc" in col_lower and "description" in col_lower):
                         col_map[col] = "Description"
@@ -271,8 +291,15 @@ def load_data(uploaded_files):
 
                 capas = capas.rename(columns=col_map)
 
+                # Ensure every column we reference downstream actually exists,
+                # so a missing/oddly-named source column never raises KeyError.
+                for required in ("Location", "Number", "Type",
+                                 "Date of notification", "Date closed"):
+                    if required not in capas.columns:
+                        capas[required] = pd.NA
+
                 # Extract location from the first data column if not already mapped
-                if "Location" not in capas.columns:
+                if capas["Location"].isna().all() and capas.shape[1] > 0:
                     capas["Location"] = capas.iloc[:, 0]
 
                 # Filter to relevant CAPA types
@@ -290,16 +317,13 @@ def load_data(uploaded_files):
                     "3rd party audit",
                     "Internal assessment",
                 ]
-                if "Type" in capas.columns:
-                    mask = capas["Type"].astype(str).str.strip().str.lower().isin([e.lower() for e in _include])
+                mask = capas["Type"].astype(str).str.strip().str.lower().isin(
+                    [e.lower() for e in _include]
+                )
+                if mask.any():
                     capas = capas[mask]
-
-                # For 2026+ format, keep per-row locations; for legacy, use filename location
-                # If location was derived from filename and is non-empty, use it; otherwise keep per-row
-                if location and location not in uploaded.name:
-                    # Filename-based location (legacy format)
-                    capas["Location"] = location
-                # else: keep the per-row locations from the first column
+                # If no Type matches at all, keep all rows so the user still
+                # sees their data instead of a silently empty dashboard.
 
                 # Parse dates
                 capas["Date of notification"] = pd.to_datetime(
@@ -323,6 +347,17 @@ def load_data(uploaded_files):
                         lambda x: "Closed" if pd.notna(x) else "Open"
                     )
 
+                # Clean up Location: coerce to str, blank/NaN -> "Unknown" so
+                # sorting and multiselect can't trip on mixed types.
+                capas["Location"] = (
+                    capas["Location"]
+                    .astype("object")
+                    .where(capas["Location"].notna(), "Unknown")
+                    .astype(str)
+                    .str.strip()
+                    .replace("", "Unknown")
+                )
+
                 capas_frames.append(capas)
 
         except Exception as e:
@@ -337,7 +372,10 @@ def load_data(uploaded_files):
         st.error("No CAPA data could be loaded. Please check your files.")
         return pd.DataFrame(), []
     all_capas = pd.concat(capas_frames, ignore_index=True)
-    locations = sorted(all_capas["Location"].unique().tolist())
+    locations = sorted(
+        str(loc) for loc in all_capas["Location"].dropna().unique()
+        if str(loc).strip()
+    )
     return all_capas, locations
 
 
