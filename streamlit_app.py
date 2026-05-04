@@ -69,6 +69,37 @@ def autofit(ws, max_w=40, min_w=10):
         ws.column_dimensions[get_column_letter(col_cells[0].column)].width = length
 
 
+def _xlrd_sheet_to_df(wb, sheet_name):
+    """Read a sheet from an xlrd.Book directly into a DataFrame.
+
+    Pandas 2.3+ no longer accepts an xlrd.Book object as the io argument to
+    pd.read_excel, so we materialize the sheet ourselves. Excel date cells
+    are converted to pandas datetimes; empty cells become None.
+    """
+    sheet = wb.sheet_by_name(sheet_name)
+    if sheet.nrows == 0:
+        return pd.DataFrame()
+    headers = [str(v).strip() if v is not None else "" for v in sheet.row_values(0)]
+    rows = []
+    for r in range(1, sheet.nrows):
+        row = []
+        for c in range(sheet.ncols):
+            cell = sheet.cell(r, c)
+            val = cell.value
+            if cell.ctype == xlrd.XL_CELL_DATE:
+                try:
+                    val = xlrd.xldate.xldate_as_datetime(val, wb.datemode)
+                except Exception:
+                    pass
+            elif cell.ctype == xlrd.XL_CELL_BOOLEAN:
+                val = bool(val)
+            elif cell.ctype == xlrd.XL_CELL_EMPTY:
+                val = None
+            row.append(val)
+        rows.append(row)
+    return pd.DataFrame(rows, columns=headers)
+
+
 # ── Data loading ──────────────────────────────────────────────────────────────
 def load_data(uploaded_files):
     """Parse uploaded export_CAPA *.xls / *.xlsx files and return a merged DataFrame.
@@ -127,7 +158,7 @@ def load_data(uploaded_files):
         try:
             if is_legacy_format:
                 # Legacy format: Capas and Taken sheets
-                capas = pd.read_excel(wb, sheet_name="Capas", engine="xlrd")
+                capas = _xlrd_sheet_to_df(wb, "Capas")
                 # Keep only selected CAPA types
                 _include = [
                     "Client Complaint", "Client complaint",
@@ -151,7 +182,7 @@ def load_data(uploaded_files):
                 )
 
                 try:
-                    taken = pd.read_excel(wb, sheet_name="Taken", engine="xlrd")
+                    taken = _xlrd_sheet_to_df(wb, "Taken")
                 except Exception as e:
                     st.error(f"Failed to read 'Taken' sheet: {e}")
                     continue
@@ -749,25 +780,33 @@ c5.metric("Currently Open", f"{metrics['open']:,}")
 c6.metric(f"Open > {OPEN_THRESHOLD_DAYS} Days", f"{metrics['open_gt90']:,}")
 
 # ----- Trend chart (average days to close per month) -----
-trend_df = (
-    filtered.assign(month=filtered["Date closed"].dt.to_period("M"))
-    .groupby("month")
-    .apply(lambda d: (d["Date closed"] - d["Date of notification"]).dt.days.mean())
-    .reset_index(name="avg_days")
+trend_src = (
+    filtered.dropna(subset=["Date closed", "Date of notification"])
+    [["Date closed", "Date of notification"]]
+    .copy()
 )
-trend_df["month"] = trend_df["month"].dt.to_timestamp()
-
-trend_chart = (
-    alt.Chart(trend_df)
-    .mark_line(point=True, color=f"#{MED_BLUE}")
-    .encode(
-        x=alt.X("month:T", title="Month"),
-        y=alt.Y("avg_days:Q", title="Avg days to close"),
+if not trend_src.empty:
+    trend_src["month"] = trend_src["Date closed"].dt.to_period("M")
+    trend_src["days"] = (trend_src["Date closed"] - trend_src["Date of notification"]).dt.days
+    trend_df = (
+        trend_src.groupby("month", as_index=False)["days"].mean()
+        .rename(columns={"days": "avg_days"})
     )
-    .properties(width=700, height=300, title="Close‑time trend")
-)
-st.altair_chart(trend_chart, use_container_width=True)
-st.caption("Average days from notification to closure, aggregated by month.")
+    trend_df["month"] = trend_df["month"].dt.to_timestamp()
+
+    trend_chart = (
+        alt.Chart(trend_df)
+        .mark_line(point=True, color=f"#{MED_BLUE}")
+        .encode(
+            x=alt.X("month:T", title="Month"),
+            y=alt.Y("avg_days:Q", title="Avg days to close"),
+        )
+        .properties(width=700, height=300, title="Close‑time trend")
+    )
+    st.altair_chart(trend_chart, use_container_width=True)
+    st.caption("Average days from notification to closure, aggregated by month.")
+else:
+    st.info("Not enough closed-CAPA data for the trend chart.")
 
 # ── Location table ────────────────────────────────────────────────────────────
 st.subheader("Performance by Location")
