@@ -73,6 +73,7 @@ def autofit(ws, max_w=40, min_w=10):
 def load_data(uploaded_files):
     """Parse uploaded export_CAPA *.xls files and return a merged DataFrame.
     Shows a progress bar while processing multiple files.
+    Handles both legacy format (Capas/Taken sheets) and 2026+ format (CAR/PAR/CAF/PTO sheets).
     """
     # Progress bar (Streamlit UI)
     progress = st.progress(0)
@@ -80,79 +81,222 @@ def load_data(uploaded_files):
 
     capas_frames = []
     for i, uploaded in enumerate(uploaded_files, 1):
-        # Derive location name from filename: "export_CAPA SomeSite.xls" → "SomeSite"
+        # Derive location name from filename
         location = (
             uploaded.name
             .replace("export_CAPA ", "")
             .replace(".xls", "")
+            .strip()
         )
 
-        # Open the .xls workbook with corruption tolerance so that
-        # files exported from the CAPA system (which sometimes have minor
-        # compound-document irregularities) can still be read.
+        raw_bytes = uploaded.read()
+        uploaded.seek(0)  # reset for any later use
+
+        # Try to detect file format and open with appropriate engine
+        wb = None
+        is_legacy_format = False
         try:
-            raw_bytes = uploaded.read()
-            uploaded.seek(0)  # reset for any later use
+            # First try xlrd for old .xls (BIFF) format
             wb = xlrd.open_workbook(
                 file_contents=raw_bytes,
                 ignore_workbook_corruption=True,
             )
-        except Exception as e:
-            st.error(f"Failed to open workbook for {uploaded.name}: {e}")
-            continue
+            is_legacy_format = True
+        except Exception:
+            pass
+
+        if wb is None:
+            # Try openpyxl for .xlsx format (files with .xls extension but xlsx content)
+            try:
+                import openpyxl
+                # Write bytes to temp file for openpyxl
+                import tempfile
+                import os
+                with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as tmp:
+                    tmp.write(raw_bytes)
+                    tmp_path = tmp.name
+                try:
+                    wb = openpyxl.load_workbook(tmp_path, data_only=True)
+                finally:
+                    os.unlink(tmp_path)
+            except Exception as e:
+                st.error(f"Failed to open workbook for {uploaded.name}: {e}")
+                continue
 
         try:
-            capas = pd.read_excel(wb, sheet_name="Capas", engine="xlrd")
+            if is_legacy_format:
+                # Legacy format: Capas and Taken sheets
+                capas = pd.read_excel(wb, sheet_name="Capas", engine="xlrd")
+                # Keep only selected CAPA types
+                _include = [
+                    "Client Complaint", "Client complaint",
+                    "Customer Complaint", "Customer complaint",
+                    "Site complaint",
+                    "PT Outlier",
+                    "Proficiency Testing Outlier",
+                    "Proficiency test and Round Robins",
+                    "Internal Audit",
+                ]
+                if "Type" in capas.columns:
+                    mask = capas["Type"].astype(str).str.strip().str.lower().isin([e.lower() for e in _include])
+                    capas = capas[mask]
+
+                capas["Location"] = location
+                capas["Date of notification"] = pd.to_datetime(
+                    capas["Date of notification"], dayfirst=True, errors="coerce"
+                )
+                capas["Date closed"] = pd.to_datetime(
+                    capas["Date closed"], dayfirst=True, errors="coerce"
+                )
+
+                try:
+                    taken = pd.read_excel(wb, sheet_name="Taken", engine="xlrd")
+                except Exception as e:
+                    st.error(f"Failed to read 'Taken' sheet: {e}")
+                    continue
+                taken["Date of completion"] = pd.to_datetime(
+                    taken["Date of completion"], dayfirst=True, errors="coerce"
+                )
+
+                task_groups = taken.groupby("Number")
+
+                def resolve_closed_date(row, _tg=task_groups):
+                    num = row["Number"]
+                    capas_date = row["Date closed"]
+                    if num in _tg.groups:
+                        group = _tg.get_group(num)
+                        completed = group[group["Completed"].str.strip().str.lower() == "yes"]
+                        max_date = completed["Date of completion"].dropna().max()
+                        if pd.notna(max_date):
+                            return max_date
+                    return capas_date
+
+                capas["Effective closed date"] = capas.apply(resolve_closed_date, axis=1)
+                capas["Effective closed date"] = pd.to_datetime(capas["Effective closed date"], errors="coerce")
+                capas_frames.append(capas)
+            else:
+                # 2026+ format: CAR, PAR, CAF, PTO sheets with location in first column
+                # Load CAR sheet (Corrective Action Reports - main CAPA source)
+                car_sheet_name = None
+                for name in wb.sheetnames:
+                    if "CAR" in name.upper():
+                        car_sheet_name = name
+                        break
+
+                if car_sheet_name is None:
+                    st.error(f"No CAR sheet found in {uploaded.name}")
+                    continue
+
+                # Read CAR sheet with openpyxl
+                # Note: Row 1 = English headers, Row 2 = Spanish translations, Row 3+ = data
+                car_data = []
+                ws = wb[car_sheet_name]
+                headers = None
+                for row_idx, row in enumerate(ws.iter_rows(values_only=True), start=1):
+                    if row_idx == 1:
+                        # Use English headers (row 1)
+                        headers = [str(h).strip() if h else "" for h in row]
+                        continue
+                    if row_idx == 2:
+                        # Skip Spanish translation row
+                        continue
+
+                    # Extract location from first column (it's dynamic based on row)
+                    loc_value = row[0] if len(row) > 0 else None
+                    # Skip rows where first column looks like a header translation
+                    if loc_value and isinstance(loc_value, str) and loc_value.strip():
+                        if "locación" in loc_value.lower() or "id de la locación" in loc_value.lower():
+                            continue  # Skip translation row
+                        car_data.append(row)
+
+                if not car_data:
+                    st.error(f"No CAR data found in {uploaded.name}")
+                    continue
+
+                # Build DataFrame with normalized column names
+                capas = pd.DataFrame(car_data, columns=headers)
+
+                # Normalize column names - find the key columns by pattern matching
+                col_map = {}
+                for col in capas.columns:
+                    col_lower = col.lower()
+                    if "location" in col_lower and "id" not in col_lower:
+                        col_map[col] = "Location"
+                    elif "initialized" in col_lower and "date" in col_lower:
+                        col_map[col] = "Date of notification"
+                    elif "effectiveness" in col_lower and "closed" in col_lower:
+                        col_map[col] = "Date closed"
+                    elif "complete corrective" in col_lower or "approved date" in col_lower:
+                        col_map[col] = "Complete corrective actions (Approved Date)"
+                    elif "car #" in col_lower or "car number" in col_lower:
+                        col_map[col] = "Number"
+                    elif col_lower == "car type" or "car type" in col_lower:
+                        col_map[col] = "Type"
+                    elif "brief description" in col_lower or ("nc" in col_lower and "description" in col_lower):
+                        col_map[col] = "Description"
+                    elif "status" in col_lower:
+                        col_map[col] = "Status"
+
+                capas = capas.rename(columns=col_map)
+
+                # Extract location from the first data column if not already mapped
+                if "Location" not in capas.columns:
+                    capas["Location"] = capas.iloc[:, 0]
+
+                # Filter to relevant CAPA types
+                _include = [
+                    "Client Complaint", "Client complaint",
+                    "Customer Complaint", "Customer complaint",
+                    "Site complaint",
+                    "PT Outlier",
+                    "Proficiency Testing Outlier",
+                    "Proficiency test and Round Robins",
+                    "Internal Audit",
+                    "Complaint",
+                    "Other (QC, customer alert, improper procedure)",
+                    "Customer audit",
+                    "3rd party audit",
+                    "Internal assessment",
+                ]
+                if "Type" in capas.columns:
+                    mask = capas["Type"].astype(str).str.strip().str.lower().isin([e.lower() for e in _include])
+                    capas = capas[mask]
+
+                # For 2026+ format, keep per-row locations; for legacy, use filename location
+                # If location was derived from filename and is non-empty, use it; otherwise keep per-row
+                if location and location not in uploaded.name:
+                    # Filename-based location (legacy format)
+                    capas["Location"] = location
+                # else: keep the per-row locations from the first column
+
+                # Parse dates
+                capas["Date of notification"] = pd.to_datetime(
+                    capas["Date of notification"], errors="coerce"
+                )
+                capas["Date closed"] = pd.to_datetime(
+                    capas["Date closed"], errors="coerce"
+                )
+
+                # Use Complete corrective actions date as fallback for effective closed date
+                if "Complete corrective actions (Approved Date)" in capas.columns:
+                    capas["Effective closed date"] = capas["Date closed"].fillna(
+                        pd.to_datetime(capas["Complete corrective actions (Approved Date)"], errors="coerce")
+                    )
+                else:
+                    capas["Effective closed date"] = capas["Date closed"]
+
+                # Add Status column if not present
+                if "Status" not in capas.columns:
+                    capas["Status"] = capas["Date closed"].apply(
+                        lambda x: "Closed" if pd.notna(x) else "Open"
+                    )
+
+                capas_frames.append(capas)
+
         except Exception as e:
-            st.error(f"Failed to read 'Capas' sheet: {e}")
+            st.error(f"Failed to process {uploaded.name}: {e}")
             continue
-        # Keep only selected CAPA types
-        _include = [
-            "Client Complaint", "Client complaint",
-            "Customer Complaint", "Customer complaint",
-            "Site complaint",
-            "PT Outlier",
-            "Proficiency Testing Outlier",
-            "Proficiency test and Round Robins",
-            "Internal Audit",
-        ]
-        if "Type" in capas.columns:
-            mask = capas["Type"].astype(str).str.strip().str.lower().isin([e.lower() for e in _include])
-            capas = capas[mask]
 
-        capas["Location"] = location
-        capas["Date of notification"] = pd.to_datetime(
-            capas["Date of notification"], dayfirst=True, errors="coerce"
-        )
-        capas["Date closed"] = pd.to_datetime(
-            capas["Date closed"], dayfirst=True, errors="coerce"
-        )
-
-        try:
-            taken = pd.read_excel(wb, sheet_name="Taken", engine="xlrd")
-        except Exception as e:
-            st.error(f"Failed to read 'Taken' sheet: {e}")
-            continue
-        taken["Date of completion"] = pd.to_datetime(
-            taken["Date of completion"], dayfirst=True, errors="coerce"
-        )
-
-        task_groups = taken.groupby("Number")
-
-        def resolve_closed_date(row, _tg=task_groups):
-            num = row["Number"]
-            capas_date = row["Date closed"]
-            if num in _tg.groups:
-                group = _tg.get_group(num)
-                completed = group[group["Completed"].str.strip().str.lower() == "yes"]
-                max_date = completed["Date of completion"].dropna().max()
-                if pd.notna(max_date):
-                    return max_date
-            return capas_date
-
-        capas["Effective closed date"] = capas.apply(resolve_closed_date, axis=1)
-        capas["Effective closed date"] = pd.to_datetime(capas["Effective closed date"], errors="coerce")
-        capas_frames.append(capas)
         # Update progress bar
         progress.progress(i / total)
 
