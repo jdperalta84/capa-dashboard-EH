@@ -305,8 +305,12 @@ def load_data(uploaded_files):
             st.error(f"Failed to process {uploaded.name}: {e}")
             continue
 
-        # Update progress bar
-        progress.progress(i / total)
+        # Update progress bar. st.progress() accepts either a float in [0.0, 1.0]
+        # or an int in [0, 100]; using the int form sidesteps float-validation
+        # quirks observed on Streamlit 1.57 / Python 3.14, and the clamp
+        # guards against any rounding that lands one tick outside the range.
+        if total > 0:
+            progress.progress(max(0, min(100, int(i * 100 / total))))
 
     progress.empty()
     if not capas_frames:
