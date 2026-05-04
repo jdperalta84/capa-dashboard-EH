@@ -71,7 +71,7 @@ def autofit(ws, max_w=40, min_w=10):
 
 # ── Data loading ──────────────────────────────────────────────────────────────
 def load_data(uploaded_files):
-    """Parse uploaded export_CAPA *.xls files and return a merged DataFrame.
+    """Parse uploaded export_CAPA *.xls / *.xlsx files and return a merged DataFrame.
     Shows a progress bar while processing multiple files.
     Handles both legacy format (Capas/Taken sheets) and 2026+ format (CAR/PAR/CAF/PTO sheets).
     """
@@ -85,6 +85,7 @@ def load_data(uploaded_files):
         location = (
             uploaded.name
             .replace("export_CAPA ", "")
+            .replace(".xlsx", "")
             .replace(".xls", "")
             .strip()
         )
@@ -608,7 +609,7 @@ def build_excel_report(metrics, method):
         ("Open > 90 days",
          f"Open CAPAs where today - Date of notification > {OPEN_THRESHOLD_DAYS} days.", False),
         ("DATA SOURCES", "", True),
-        ("Input files", "All files matching 'export_CAPA *.xls' in the project folder.", False),
+        ("Input files", "All files matching 'export_CAPA *.xls' or 'export_CAPA *.xlsx' in the project folder.", False),
         ("Sheets used", "'Capas' sheet + 'Taken' sheet.", False),
     ]
 
@@ -692,14 +693,14 @@ st.title("CAPA KPI Dashboard")
 st.caption(f"Report date: {TODAY.strftime('%B %d, %Y')}")
 
 uploaded_files = st.file_uploader(
-    "Upload your export_CAPA .xls files",
-    type=["xls"],
+    "Upload your export_CAPA .xls or .xlsx files",
+    type=["xls", "xlsx"],
     accept_multiple_files=True,
-    help="Select one or more `export_CAPA *.xls` files exported from your CAPA system.",
+    help="Select one or more `export_CAPA *.xls` or `export_CAPA *.xlsx` files exported from your CAPA system.",
 )
 
 if not uploaded_files:
-    st.info("Upload one or more `export_CAPA *.xls` files to get started.")
+    st.info("Upload one or more `export_CAPA *.xls` or `*.xlsx` files to get started.")
     st.stop()
 
 all_capas, locations = load_data(uploaded_files)
