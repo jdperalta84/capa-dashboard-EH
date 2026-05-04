@@ -205,158 +205,101 @@ def load_data(uploaded_files):
                 capas["Effective closed date"] = pd.to_datetime(capas["Effective closed date"], errors="coerce")
                 capas_frames.append(capas)
             else:
-                # 2026+ format: CAR, PAR, CAF, PTO sheets with location in first column
-                # Load CAR sheet (Corrective Action Reports - main CAPA source)
-                car_sheet_name = None
-                for name in wb.sheetnames:
-                    if "CAR" in name.upper():
-                        car_sheet_name = name
-                        break
+                # 2026+ format: each sheet is a CAPA type (CAR, PTO, ...) with the
+                # location in column A and date columns at fixed positions per sheet.
+                # Header pattern matching is too unreliable here (multiple
+                # *_closed_date variants exist), so we rely on documented column
+                # indices instead. Number column is best-effort by header.
+                #
+                # Layout (0-indexed):
+                #   CAR sheet -> notification col K (10), closed col M (12)
+                #   PTO sheet -> notification col I (8),  closed col L (11)
+                SHEET_LAYOUTS = {
+                    "CAR": {"type_label": "CAR", "notif_col": 10, "closed_col": 12},
+                    "PTO": {"type_label": "PTO", "notif_col": 8,  "closed_col": 11},
+                }
 
-                if car_sheet_name is None:
-                    st.error(f"No CAR sheet found in {uploaded.name}")
-                    continue
-
-                # Read CAR sheet with openpyxl
-                # Note: Row 1 = English headers, Row 2 = Spanish translations, Row 3+ = data
-                car_data = []
-                ws = wb[car_sheet_name]
-                headers = None
-                for row_idx, row in enumerate(ws.iter_rows(values_only=True), start=1):
-                    if row_idx == 1:
-                        raw = [str(h).strip() if h is not None else "" for h in row]
-                        # Make headers unique and non-empty so DataFrame construction
-                        # and later column lookups don't collide or fail.
-                        seen = {}
-                        headers = []
-                        for h in raw:
-                            base = h or "_unnamed"
-                            if base in seen:
-                                seen[base] += 1
-                                headers.append(f"{base}__{seen[base]}")
-                            else:
-                                seen[base] = 0
-                                headers.append(base)
-                        continue
-                    if row_idx == 2:
-                        # Skip Spanish translation row
-                        continue
-
-                    # Extract location from first column (it's dynamic based on row)
-                    loc_value = row[0] if len(row) > 0 else None
-                    # Skip rows where first column looks like a header translation
-                    if loc_value and isinstance(loc_value, str) and loc_value.strip():
-                        if "locación" in loc_value.lower() or "id de la locación" in loc_value.lower():
-                            continue  # Skip translation row
-                        car_data.append(row)
-
-                if not car_data:
-                    st.error(f"No CAR data found in {uploaded.name}")
-                    continue
-
-                # Build DataFrame with normalized column names
-                capas = pd.DataFrame(car_data, columns=headers)
-
-                # Normalize column names - find the key columns by pattern matching.
-                # Patterns are intentionally permissive so common header variants
-                # ("Date Closed", "Closed Date", "Notification Date", etc.) all map.
-                col_map = {}
-                for col in capas.columns:
-                    col_lower = col.lower().strip()
-                    if not col_lower or col_lower.startswith("_unnamed"):
-                        continue
-                    if "location" in col_lower and "id" not in col_lower:
-                        col_map[col] = "Location"
-                    elif (
-                        "initialized" in col_lower
-                        or "notification" in col_lower
-                        or "open date" in col_lower
-                        or "date opened" in col_lower
-                    ):
-                        col_map[col] = "Date of notification"
-                    elif "closed" in col_lower and ("date" in col_lower or "effective" in col_lower):
-                        col_map[col] = "Date closed"
-                    elif "complete corrective" in col_lower or "approved date" in col_lower:
-                        col_map[col] = "Complete corrective actions (Approved Date)"
-                    elif "car #" in col_lower or "car number" in col_lower or col_lower in ("number", "id", "car id"):
-                        col_map[col] = "Number"
-                    elif "car type" in col_lower or col_lower == "type":
-                        col_map[col] = "Type"
-                    elif "brief description" in col_lower or ("nc" in col_lower and "description" in col_lower):
-                        col_map[col] = "Description"
-                    elif "status" in col_lower:
-                        col_map[col] = "Status"
-
-                capas = capas.rename(columns=col_map)
-
-                # Ensure every column we reference downstream actually exists,
-                # so a missing/oddly-named source column never raises KeyError.
-                for required in ("Location", "Number", "Type",
-                                 "Date of notification", "Date closed"):
-                    if required not in capas.columns:
-                        capas[required] = pd.NA
-
-                # Extract location from the first data column if not already mapped
-                if capas["Location"].isna().all() and capas.shape[1] > 0:
-                    capas["Location"] = capas.iloc[:, 0]
-
-                # Filter to relevant CAPA types
-                _include = [
-                    "Client Complaint", "Client complaint",
-                    "Customer Complaint", "Customer complaint",
-                    "Site complaint",
-                    "PT Outlier",
-                    "Proficiency Testing Outlier",
-                    "Proficiency test and Round Robins",
-                    "Internal Audit",
-                    "Complaint",
-                    "Other (QC, customer alert, improper procedure)",
-                    "Customer audit",
-                    "3rd party audit",
-                    "Internal assessment",
-                ]
-                mask = capas["Type"].astype(str).str.strip().str.lower().isin(
-                    [e.lower() for e in _include]
-                )
-                if mask.any():
-                    capas = capas[mask]
-                # If no Type matches at all, keep all rows so the user still
-                # sees their data instead of a silently empty dashboard.
-
-                # Parse dates
-                capas["Date of notification"] = pd.to_datetime(
-                    capas["Date of notification"], errors="coerce"
-                )
-                capas["Date closed"] = pd.to_datetime(
-                    capas["Date closed"], errors="coerce"
-                )
-
-                # Use Complete corrective actions date as fallback for effective closed date
-                if "Complete corrective actions (Approved Date)" in capas.columns:
-                    capas["Effective closed date"] = capas["Date closed"].fillna(
-                        pd.to_datetime(capas["Complete corrective actions (Approved Date)"], errors="coerce")
+                matched_any_sheet = False
+                for sheet_name in wb.sheetnames:
+                    upper = sheet_name.upper()
+                    layout = next(
+                        (cfg for key, cfg in SHEET_LAYOUTS.items() if key in upper),
+                        None,
                     )
-                else:
-                    capas["Effective closed date"] = capas["Date closed"]
+                    if layout is None:
+                        continue
+                    matched_any_sheet = True
 
-                # Add Status column if not present
-                if "Status" not in capas.columns:
-                    capas["Status"] = capas["Date closed"].apply(
+                    ws = wb[sheet_name]
+                    # Row 1 = English headers, row 2 = Spanish translations, row 3+ = data
+                    headers = None
+                    rows_data = []
+                    for row_idx, row in enumerate(ws.iter_rows(values_only=True), start=1):
+                        if row_idx == 1:
+                            headers = [str(h).strip() if h is not None else "" for h in row]
+                            continue
+                        if row_idx == 2:
+                            continue
+                        loc_value = row[0] if len(row) > 0 else None
+                        if not (loc_value and isinstance(loc_value, str) and loc_value.strip()):
+                            continue
+                        if "locación" in loc_value.lower() or "id de la locación" in loc_value.lower():
+                            continue
+                        rows_data.append(row)
+
+                    if not rows_data:
+                        continue
+
+                    # Best-effort lookup for the Number column by header. Falls back
+                    # to column B if no recognizable header is found.
+                    number_idx = 1
+                    if headers:
+                        for i, h in enumerate(headers):
+                            hl = h.lower().strip()
+                            if hl in (f"{layout['type_label'].lower()} #",
+                                       f"{layout['type_label'].lower()} number",
+                                       "number", "id"):
+                                number_idx = i
+                                break
+
+                    def cell(row, idx):
+                        return row[idx] if len(row) > idx else None
+
+                    sheet_df = pd.DataFrame({
+                        "Location": [cell(r, 0) for r in rows_data],
+                        "Number":   [cell(r, number_idx) for r in rows_data],
+                        "Type":     layout["type_label"],
+                        "Date of notification": [cell(r, layout["notif_col"]) for r in rows_data],
+                        "Date closed":          [cell(r, layout["closed_col"]) for r in rows_data],
+                    })
+
+                    sheet_df["Date of notification"] = pd.to_datetime(
+                        sheet_df["Date of notification"], errors="coerce"
+                    )
+                    sheet_df["Date closed"] = pd.to_datetime(
+                        sheet_df["Date closed"], errors="coerce"
+                    )
+                    sheet_df["Effective closed date"] = sheet_df["Date closed"]
+                    sheet_df["Status"] = sheet_df["Date closed"].apply(
                         lambda x: "Closed" if pd.notna(x) else "Open"
                     )
+                    sheet_df["Location"] = (
+                        sheet_df["Location"]
+                        .astype("object")
+                        .where(sheet_df["Location"].notna(), "Unknown")
+                        .astype(str)
+                        .str.strip()
+                        .replace("", "Unknown")
+                    )
 
-                # Clean up Location: coerce to str, blank/NaN -> "Unknown" so
-                # sorting and multiselect can't trip on mixed types.
-                capas["Location"] = (
-                    capas["Location"]
-                    .astype("object")
-                    .where(capas["Location"].notna(), "Unknown")
-                    .astype(str)
-                    .str.strip()
-                    .replace("", "Unknown")
-                )
+                    capas_frames.append(sheet_df)
 
-                capas_frames.append(capas)
+                if not matched_any_sheet:
+                    st.error(
+                        f"No CAR or PTO sheet found in {uploaded.name} "
+                        f"(sheets present: {', '.join(wb.sheetnames)})"
+                    )
+                    continue
 
         except Exception as e:
             st.error(f"Failed to process {uploaded.name}: {e}")
@@ -771,6 +714,12 @@ if not uploaded_files:
     st.stop()
 
 all_capas, locations = load_data(uploaded_files)
+
+# Quick "what got loaded" line so the user can sanity-check sheet coverage.
+if not all_capas.empty and "Type" in all_capas.columns:
+    type_counts = all_capas["Type"].value_counts(dropna=False).to_dict()
+    summary = ", ".join(f"{int(n)} {t}" for t, n in type_counts.items())
+    st.caption(f"Loaded {len(all_capas)} records ({summary}).")
 
 # ── Sidebar ───────────────────────────────────────────────────────────────────
 st.sidebar.header("Settings")
