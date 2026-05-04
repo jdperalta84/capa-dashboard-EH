@@ -138,19 +138,17 @@ def load_data(uploaded_files):
             pass
 
         if wb is None:
-            # Try openpyxl for .xlsx format (files with .xls extension but xlsx content)
+            # Try openpyxl for .xlsx format (files with .xls extension but xlsx content).
+            # read_only=True uses a streaming parser; the default mode loads the entire
+            # workbook into memory and can OOM Streamlit Cloud's 1 GB instance for
+            # larger CAPA exports (process is killed -> "connection reset by peer").
             try:
                 import openpyxl
-                # Write bytes to temp file for openpyxl
-                import tempfile
-                import os
-                with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as tmp:
-                    tmp.write(raw_bytes)
-                    tmp_path = tmp.name
-                try:
-                    wb = openpyxl.load_workbook(tmp_path, data_only=True)
-                finally:
-                    os.unlink(tmp_path)
+                wb = openpyxl.load_workbook(
+                    io.BytesIO(raw_bytes),
+                    read_only=True,
+                    data_only=True,
+                )
             except Exception as e:
                 st.error(f"Failed to open workbook for {uploaded.name}: {e}")
                 continue
