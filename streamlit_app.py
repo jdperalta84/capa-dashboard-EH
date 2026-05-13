@@ -345,6 +345,12 @@ def compute_metrics(all_capas, method):
     days_open = (pd.Timestamp(TODAY) - all_capas["Date of notification"]).dt.days
     open_gt90 = is_open & (days_open > OPEN_THRESHOLD_DAYS)
 
+    # Initiated-in-2026 cohort (based on notification/initiation date, not close date)
+    initiated_2026 = all_capas["Date of notification"].dt.year == 2026
+    init2026_closed = initiated_2026 & is_closed
+    init2026_open = initiated_2026 & is_open
+    init2026_open_gt90 = initiated_2026 & open_gt90
+
     def avg_days(mask):
         df = all_capas[mask].copy()
         df["days_to_close"] = (df[closed_col] - df["Date of notification"]).dt.days
@@ -353,6 +359,7 @@ def compute_metrics(all_capas, method):
 
     avg_2025 = avg_days(closed_2025)
     avg_2026 = avg_days(closed_2026)
+    avg_init2026 = avg_days(init2026_closed)
 
     # Per-location breakdown
     location_rows = []
@@ -360,6 +367,7 @@ def compute_metrics(all_capas, method):
         mask = all_capas["Location"] == loc
         loc_avg_2025 = avg_days(mask & closed_2025)
         loc_avg_2026 = avg_days(mask & closed_2026)
+        loc_avg_init2026 = avg_days(mask & init2026_closed)
         location_rows.append({
             "Location": loc,
             "Avg Days to Close (2025)": round(loc_avg_2025, 1) if pd.notna(loc_avg_2025) else "N/A",
@@ -368,6 +376,11 @@ def compute_metrics(all_capas, method):
             "Closed 2026": int((mask & closed_2026).sum()),
             "Open": int((mask & is_open).sum()),
             f"Open > {OPEN_THRESHOLD_DAYS} days": int((mask & open_gt90).sum()),
+            "Initiated 2026 — Avg Days to Complete":
+                round(loc_avg_init2026, 1) if pd.notna(loc_avg_init2026) else "N/A",
+            "Initiated 2026 — Completed": int((mask & init2026_closed).sum()),
+            f"Initiated 2026 — Open > {OPEN_THRESHOLD_DAYS} days":
+                int((mask & init2026_open_gt90).sum()),
         })
 
     df_location = pd.DataFrame(location_rows)
@@ -380,6 +393,10 @@ def compute_metrics(all_capas, method):
         "Closed 2026": all_capas[closed_2026][cols_detail].copy(),
         "Open": all_capas[is_open][cols_detail].copy(),
         f"Open > {OPEN_THRESHOLD_DAYS} days": all_capas[open_gt90][cols_detail].copy(),
+        "Init 2026 - Completed": all_capas[init2026_closed][cols_detail].copy(),
+        "Init 2026 - Open": all_capas[init2026_open][cols_detail].copy(),
+        f"Init 2026 - Open > {OPEN_THRESHOLD_DAYS} days":
+            all_capas[init2026_open_gt90][cols_detail].copy(),
     }
 
     return {
@@ -389,6 +406,11 @@ def compute_metrics(all_capas, method):
         "closed_2026": int(closed_2026.sum()),
         "open": int(is_open.sum()),
         "open_gt90": int(open_gt90.sum()),
+        "init2026_total": int(initiated_2026.sum()),
+        "init2026_completed": int(init2026_closed.sum()),
+        "init2026_open": int(init2026_open.sum()),
+        "init2026_open_gt90": int(init2026_open_gt90.sum()),
+        "avg_init2026": avg_init2026,
         "df_location": df_location,
         "details": details,
     }
@@ -405,6 +427,11 @@ def build_excel_report(metrics, method):
     total_closed_2026 = m["closed_2026"]
     total_open = m["open"]
     total_open_gt90 = m["open_gt90"]
+    init2026_total = m["init2026_total"]
+    init2026_completed = m["init2026_completed"]
+    init2026_open = m["init2026_open"]
+    init2026_open_gt90 = m["init2026_open_gt90"]
+    avg_init2026 = m["avg_init2026"]
 
     is_taskdates = method == "taskdates"
     title_suffix = " — Task Date Priority" if is_taskdates else ""
@@ -469,9 +496,31 @@ def build_excel_report(metrics, method):
         lr, vr, cs, ce = card_positions[i]
         kpi_card(dash, lr, vr, cs, ce, label, value, bg_val=card_colors[i])
 
+    # ── Initiated-in-2026 cohort section ──────────────────────────────────────
+    init_hdr_row = 14
+    dash.merge_cells(f"B{init_hdr_row}:I{init_hdr_row}")
+    dash[f"B{init_hdr_row}"].value = "CAPAs Initiated in 2026"
+    dash[f"B{init_hdr_row}"].font = Font(name="Arial", bold=True, size=13, color=WHITE)
+    dash[f"B{init_hdr_row}"].fill = navy_fill()
+    dash[f"B{init_hdr_row}"].alignment = xleft()
+    dash.row_dimensions[init_hdr_row].height = 22
+
+    init_cards = [
+        ("Avg Days to Complete",
+         f"{avg_init2026:.1f} days" if pd.notna(avg_init2026) else "N/A"),
+        ("Completed", f"{init2026_completed:,}"),
+        ("Still Open", f"{init2026_open:,}"),
+        (f"Open > {OPEN_THRESHOLD_DAYS} Days", f"{init2026_open_gt90:,}"),
+    ]
+    init_label_row, init_val_row = 16, 17
+    init_card_spans = [(2, 3), (4, 5), (6, 7), (8, 9)]
+    init_card_colors = [LIGHT_BLUE, LIGHT_BLUE, LIGHT_BLUE, RED_BG]
+    for (lbl, val), (cs, ce), bg in zip(init_cards, init_card_spans, init_card_colors):
+        kpi_card(dash, init_label_row, init_val_row, cs, ce, lbl, val, bg_val=bg)
+
     # Location table on dashboard
-    tbl_start = 15
-    dash.merge_cells(f"B{tbl_start}:H{tbl_start}")
+    tbl_start = 20
+    dash.merge_cells(f"B{tbl_start}:K{tbl_start}")
     dash[f"B{tbl_start}"].value = "Performance by Location"
     dash[f"B{tbl_start}"].font = Font(name="Arial", bold=True, size=13, color=WHITE)
     dash[f"B{tbl_start}"].fill = navy_fill()
@@ -479,7 +528,10 @@ def build_excel_report(metrics, method):
     dash.row_dimensions[tbl_start].height = 22
 
     loc_cols = ["Location", "Avg Days to Close (2025)", "Closed 2025",
-                "Avg Days to Close (2026)", "Closed 2026", "Open", f"Open > {OPEN_THRESHOLD_DAYS} days"]
+                "Avg Days to Close (2026)", "Closed 2026", "Open", f"Open > {OPEN_THRESHOLD_DAYS} days",
+                "Initiated 2026 — Avg Days to Complete",
+                "Initiated 2026 — Completed",
+                f"Initiated 2026 — Open > {OPEN_THRESHOLD_DAYS} days"]
 
     hdr_row = tbl_start + 1
     for ci, col in enumerate(loc_cols, start=2):
@@ -503,7 +555,7 @@ def build_excel_report(metrics, method):
             cell.alignment = xleft() if ci == 2 else xcenter()
         dash.row_dimensions[ri].height = 18
 
-    col_widths = {2: 16, 3: 22, 4: 14, 5: 22, 6: 14, 7: 10, 8: 14, 9: 3}
+    col_widths = {2: 16, 3: 22, 4: 14, 5: 22, 6: 14, 7: 10, 8: 14, 9: 24, 10: 18, 11: 22}
     for col, w in col_widths.items():
         set_col_width(dash, col, w)
     set_col_width(dash, 1, 3)
@@ -514,7 +566,10 @@ def build_excel_report(metrics, method):
     loc_ws.sheet_view.showGridLines = False
 
     loc_headers = ["Location", "Avg Days to Close (2025)", "Closed 2025",
-                   "Avg Days to Close (2026)", "Closed 2026", "Open", f"Open > {OPEN_THRESHOLD_DAYS} Days"]
+                   "Avg Days to Close (2026)", "Closed 2026", "Open", f"Open > {OPEN_THRESHOLD_DAYS} Days",
+                   "Initiated 2026 — Avg Days to Complete",
+                   "Initiated 2026 — Completed",
+                   f"Initiated 2026 — Open > {OPEN_THRESHOLD_DAYS} Days"]
     for ci, h in enumerate(loc_headers, start=1):
         cell = loc_ws.cell(row=1, column=ci)
         cell.value = h
@@ -558,6 +613,12 @@ def build_excel_report(metrics, method):
         ("Total Closed in 2026", total_closed_2026),
         ("Currently Open", total_open),
         (f"Open > {OPEN_THRESHOLD_DAYS} Days", total_open_gt90),
+        ("Initiated 2026 — Total", init2026_total),
+        ("Initiated 2026 — Avg Days to Complete",
+         f"{avg_init2026:.1f}" if pd.notna(avg_init2026) else "N/A"),
+        ("Initiated 2026 — Completed", init2026_completed),
+        ("Initiated 2026 — Still Open", init2026_open),
+        (f"Initiated 2026 — Open > {OPEN_THRESHOLD_DAYS} Days", init2026_open_gt90),
     ]
     for ri, (metric, value) in enumerate(summary_rows, start=2):
         fill = white_fill() if ri % 2 == 0 else alt_fill()
@@ -622,6 +683,16 @@ def build_excel_report(metrics, method):
         ("Currently open", "CAPAs with no closed date.", False),
         ("Open > 90 days",
          f"Open CAPAs where today - Date of notification > {OPEN_THRESHOLD_DAYS} days.", False),
+        ("INITIATED IN 2026 COHORT", "", True),
+        ("Cohort definition",
+         "All CAPAs whose Date of notification falls in 2026, regardless of close status. "
+         "This differs from 'Closed 2026', which is based on close date.", False),
+        ("Initiated 2026 — Avg Days to Complete",
+         "For CAPAs initiated in 2026 that have closed: average of (closed date - Date of notification).", False),
+        ("Initiated 2026 — Completed",
+         "Count of 2026-initiated CAPAs that have a closed date.", False),
+        ("Initiated 2026 — Open > 90 days",
+         f"2026-initiated CAPAs still open where today - Date of notification > {OPEN_THRESHOLD_DAYS} days.", False),
         ("DATA SOURCES", "", True),
         ("Input files", "All files matching 'export_CAPA *.xls' or 'export_CAPA *.xlsx' in the project folder.", False),
         ("Sheets used", "'Capas' sheet + 'Taken' sheet.", False),
@@ -767,6 +838,22 @@ c4, c5, c6 = st.columns(3)
 c4.metric("Total Closed in 2026", f"{metrics['closed_2026']:,}")
 c5.metric("Currently Open", f"{metrics['open']:,}")
 c6.metric(f"Open > {OPEN_THRESHOLD_DAYS} Days", f"{metrics['open_gt90']:,}")
+
+# ── Initiated-in-2026 cohort ─────────────────────────────────────────────────
+st.subheader("CAPAs Initiated in 2026")
+st.caption(
+    "Cohort of CAPAs whose **Date of notification** falls in 2026, regardless of when "
+    "(or whether) they closed."
+)
+i1, i2, i3, i4 = st.columns(4)
+i1.metric(
+    "Avg Days to Complete",
+    f"{metrics['avg_init2026']:.1f}" if pd.notna(metrics["avg_init2026"]) else "N/A",
+    help="Average days from notification to closure, for 2026-initiated CAPAs that have closed.",
+)
+i2.metric("Completed", f"{metrics['init2026_completed']:,}")
+i3.metric("Still Open", f"{metrics['init2026_open']:,}")
+i4.metric(f"Open > {OPEN_THRESHOLD_DAYS} Days", f"{metrics['init2026_open_gt90']:,}")
 
 # ----- Trend chart (average days to close per month) -----
 trend_src = (
