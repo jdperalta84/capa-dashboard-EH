@@ -231,6 +231,24 @@ def load_data(uploaded_files):
                     taken["Date of completion"], dayfirst=True, errors="coerce"
                 )
 
+                # Known data-entry issue (Morocco export): CAPA0176 and
+                # CAPA0179 are notified 2026-02-25 and already show a correct
+                # 2026 closure date on the main Capas sheet, but their task
+                # rows in this Taken sheet have completion years mistakenly
+                # left at 2025 -- a full year before the CAPA was even
+                # opened. Confirmed as a year typo (one task's deadline
+                # exactly matches the notification day/month one year early;
+                # another task's deadline predates its own CAPA's
+                # notification, which isn't possible). The source system
+                # won't be corrected, so the year is patched here.
+                if location == "Morocco":
+                    _typo_mask = taken["Number"].isin(["CAPA0176", "CAPA0179"]) & (
+                        taken["Date of completion"].dt.year == 2025
+                    )
+                    taken.loc[_typo_mask, "Date of completion"] = taken.loc[
+                        _typo_mask, "Date of completion"
+                    ].apply(lambda d: d.replace(year=2026))
+
                 task_groups = taken.groupby("Number")
                 capas["Effective closed date"] = _resolve_effective_closed_dates(
                     capas, task_groups, status_col="Completed", completed_value="yes"
