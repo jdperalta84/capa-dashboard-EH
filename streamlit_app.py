@@ -23,6 +23,25 @@ st.set_page_config(page_title="CAPA KPI Dashboard", layout="wide")
 TODAY = date.today()
 OPEN_THRESHOLD_DAYS = 90
 
+# CAPA "Type" values that count toward the KPIs. Different export formats/
+# locations use different vocabulary for the same underlying categories
+# (Complaints, PT/Proficiency-Testing Outliers, Internal Audits), so this list
+# is a union of synonyms across all known formats. Nonconformities,
+# Observations, and Opportunities-for-Improvement are intentionally excluded
+# everywhere, per the existing business rule.
+CAPA_TYPE_INCLUDE = [
+    "Client Complaint", "Client complaint",
+    "Customer Complaint", "Customer complaint",
+    "Site complaint",
+    "PT Outlier",
+    "Proficiency Testing Outlier",
+    "Proficiency test and Round Robins",
+    "Internal Audit",
+    # "CAPA / Tasks" format (e.g. Mozambique, UK exports) synonyms:
+    "PTP Outlier full",
+    "PTP outlier short (insignificant risk)",
+]
+
 # ── Excel styling palette (shared by both report builders) ────────────────────
 NAVY = "1F3864"
 MED_BLUE = "2E75B6"
@@ -120,6 +139,8 @@ def load_data(uploaded_files):
             .replace(".xls", "")
             .strip()
         )
+        if location.lower().startswith("capas "):
+            location = location[len("capas "):].strip()
 
         raw_bytes = uploaded.read()
         uploaded.seek(0)  # reset for any later use
@@ -158,17 +179,10 @@ def load_data(uploaded_files):
                 # Legacy format: Capas and Taken sheets
                 capas = _xlrd_sheet_to_df(wb, "Capas")
                 # Keep only selected CAPA types
-                _include = [
-                    "Client Complaint", "Client complaint",
-                    "Customer Complaint", "Customer complaint",
-                    "Site complaint",
-                    "PT Outlier",
-                    "Proficiency Testing Outlier",
-                    "Proficiency test and Round Robins",
-                    "Internal Audit",
-                ]
                 if "Type" in capas.columns:
-                    mask = capas["Type"].astype(str).str.strip().str.lower().isin([e.lower() for e in _include])
+                    mask = capas["Type"].astype(str).str.strip().str.lower().isin(
+                        [e.lower() for e in CAPA_TYPE_INCLUDE]
+                    )
                     capas = capas[mask]
 
                 capas["Location"] = location
@@ -196,6 +210,63 @@ def load_data(uploaded_files):
                     if num in _tg.groups:
                         group = _tg.get_group(num)
                         completed = group[group["Completed"].str.strip().str.lower() == "yes"]
+                        max_date = completed["Date of completion"].dropna().max()
+                        if pd.notna(max_date):
+                            return max_date
+                    return capas_date
+
+                capas["Effective closed date"] = capas.apply(resolve_closed_date, axis=1)
+                capas["Effective closed date"] = pd.to_datetime(capas["Effective closed date"], errors="coerce")
+                capas_frames.append(capas)
+            elif "CAPA" in {s.upper() for s in wb.sheetnames} and "TASKS" in {s.upper() for s in wb.sheetnames}:
+                # "CAPA / Tasks" format (e.g. Mozambique, UK exports): same
+                # underlying schema as the legacy Capas/Taken format above —
+                # a main record sheet plus a per-task action sheet — just
+                # under different sheet/column names, and read via openpyxl
+                # since these arrive as real .xlsx files rather than legacy
+                # BIFF .xls. Single header row, no translation row to skip.
+                sheet_lookup = {s.upper(): s for s in wb.sheetnames}
+
+                def _ws_to_df(ws):
+                    rows_iter = ws.iter_rows(values_only=True)
+                    hdrs = [str(h).strip() if h is not None else "" for h in next(rows_iter, [])]
+                    return pd.DataFrame(list(rows_iter), columns=hdrs)
+
+                capas = _ws_to_df(wb[sheet_lookup["CAPA"]])
+                capas = capas.rename(columns={"Closure date": "Date closed"})
+
+                # Keep only selected CAPA types (same rule as legacy format)
+                if "Type" in capas.columns:
+                    mask = capas["Type"].astype(str).str.strip().str.lower().isin(
+                        [e.lower() for e in CAPA_TYPE_INCLUDE]
+                    )
+                    capas = capas[mask]
+
+                capas["Location"] = location
+                capas["Date of notification"] = pd.to_datetime(
+                    capas["Date of notification"], dayfirst=True, errors="coerce"
+                )
+                capas["Date closed"] = pd.to_datetime(
+                    capas["Date closed"], dayfirst=True, errors="coerce"
+                )
+
+                try:
+                    tasks = _ws_to_df(wb[sheet_lookup["TASKS"]])
+                except Exception as e:
+                    st.error(f"Failed to read 'Tasks' sheet: {e}")
+                    continue
+                tasks["Date of completion"] = pd.to_datetime(
+                    tasks["Date of completion"], dayfirst=True, errors="coerce"
+                )
+
+                task_groups = tasks.groupby("Number")
+
+                def resolve_closed_date(row, _tg=task_groups):
+                    num = row["Number"]
+                    capas_date = row["Date closed"]
+                    if num in _tg.groups:
+                        group = _tg.get_group(num)
+                        completed = group[group["Status"].astype(str).str.strip().str.lower() == "completed"]
                         max_date = completed["Date of completion"].dropna().max()
                         if pd.notna(max_date):
                             return max_date
@@ -296,7 +367,7 @@ def load_data(uploaded_files):
 
                 if not matched_any_sheet:
                     st.error(
-                        f"No CAR or PTO sheet found in {uploaded.name} "
+                        f"No CAR/PTO or CAPA/Tasks sheets found in {uploaded.name} "
                         f"(sheets present: {', '.join(wb.sheetnames)})"
                     )
                     continue
