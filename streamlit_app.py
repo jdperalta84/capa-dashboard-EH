@@ -24,19 +24,22 @@ TODAY = date.today()
 OPEN_THRESHOLD_DAYS = 90
 
 # CAPA "Type" values that count toward the KPIs. Different export formats/
-# locations use different vocabulary for the same underlying categories
-# (Complaints, PT/Proficiency-Testing Outliers, Internal Audits), so this list
-# is a union of synonyms across all known formats. Nonconformities,
-# Observations, and Opportunities-for-Improvement are intentionally excluded
-# everywhere, per the existing business rule.
+# locations use different vocabulary for the same underlying categories, so
+# this list is a union of synonyms across all known formats. Confirmed
+# against the full observed Type taxonomy across all location exports:
+# Complaints, Non-Conformities (Major/Minor/plain), Incidents, and PT/
+# Proficiency-Testing Outliers count; Observations, Opportunities for
+# Improvement, Recommendations, Points of attention/improvement, Risk,
+# and similar advisory-only categories are excluded.
 CAPA_TYPE_INCLUDE = [
     "Client Complaint", "Client complaint",
     "Customer Complaint", "Customer complaint",
-    "Site complaint",
-    "PT Outlier",
+    "Incident",
+    "Major Non-Conformity", "Major Nonconformity", "Major nonconformity",
+    "Minor Non Conformity", "Minor Nonconformity", "Minor nonconformity",
+    "Non-Conformity", "Nonconformity",
+    "PT Outlier", "PT Outlier (insignificant risk)",
     "Proficiency Testing Outlier",
-    "Proficiency test and Round Robins",
-    "Internal Audit",
     # "CAPA / Tasks" format (e.g. Mozambique, UK exports) synonyms:
     "PTP Outlier full",
     "PTP outlier short (insignificant risk)",
@@ -86,6 +89,32 @@ def autofit(ws, max_w=40, min_w=10):
             if cell.value:
                 length = max(length, min(max_w, len(str(cell.value)) + 3))
         ws.column_dimensions[get_column_letter(col_cells[0].column)].width = length
+
+
+def _resolve_effective_closed_dates(capas, task_groups, status_col, completed_value):
+    """Compute the "Effective closed date" for each CAPA from its task records.
+
+    Rule: if a CAPA has associated tasks and ALL of them are completed, the
+    latest task completion date is used (this can be later than the main
+    sheet's closure date — e.g. a follow-up effectiveness check finishing
+    after the record was marked closed). In every other case — some tasks
+    still open, or no tasks at all — fall back to the main sheet's closure
+    date; if that's also blank, the CAPA is open.
+    """
+    def resolve(row):
+        num = row["Number"]
+        capas_date = row["Date closed"]
+        if num in task_groups.groups:
+            group = task_groups.get_group(num)
+            statuses = group[status_col].astype(str).str.strip().str.lower()
+            all_completed = len(statuses) > 0 and (statuses == completed_value).all()
+            if all_completed:
+                max_date = group["Date of completion"].dropna().max()
+                if pd.notna(max_date):
+                    return max_date
+        return capas_date
+
+    return capas.apply(resolve, axis=1)
 
 
 def _xlrd_sheet_to_df(wb, sheet_name):
@@ -203,19 +232,9 @@ def load_data(uploaded_files):
                 )
 
                 task_groups = taken.groupby("Number")
-
-                def resolve_closed_date(row, _tg=task_groups):
-                    num = row["Number"]
-                    capas_date = row["Date closed"]
-                    if num in _tg.groups:
-                        group = _tg.get_group(num)
-                        completed = group[group["Completed"].str.strip().str.lower() == "yes"]
-                        max_date = completed["Date of completion"].dropna().max()
-                        if pd.notna(max_date):
-                            return max_date
-                    return capas_date
-
-                capas["Effective closed date"] = capas.apply(resolve_closed_date, axis=1)
+                capas["Effective closed date"] = _resolve_effective_closed_dates(
+                    capas, task_groups, status_col="Completed", completed_value="yes"
+                )
                 capas["Effective closed date"] = pd.to_datetime(capas["Effective closed date"], errors="coerce")
                 capas_frames.append(capas)
             elif "CAPA" in {s.upper() for s in wb.sheetnames} and "TASKS" in {s.upper() for s in wb.sheetnames}:
@@ -260,19 +279,9 @@ def load_data(uploaded_files):
                 )
 
                 task_groups = tasks.groupby("Number")
-
-                def resolve_closed_date(row, _tg=task_groups):
-                    num = row["Number"]
-                    capas_date = row["Date closed"]
-                    if num in _tg.groups:
-                        group = _tg.get_group(num)
-                        completed = group[group["Status"].astype(str).str.strip().str.lower() == "completed"]
-                        max_date = completed["Date of completion"].dropna().max()
-                        if pd.notna(max_date):
-                            return max_date
-                    return capas_date
-
-                capas["Effective closed date"] = capas.apply(resolve_closed_date, axis=1)
+                capas["Effective closed date"] = _resolve_effective_closed_dates(
+                    capas, task_groups, status_col="Status", completed_value="completed"
+                )
                 capas["Effective closed date"] = pd.to_datetime(capas["Effective closed date"], errors="coerce")
                 capas_frames.append(capas)
             else:
