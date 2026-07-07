@@ -828,7 +828,19 @@ def build_excel_report(metrics, method):
     DATE_FMT = "YYYY-MM-DD"
 
     for sheet_name, df_detail in m["details"].items():
-        ws = wb.create_sheet(f"{sheet_name} Detail")
+        # Excel sheet names are capped at 31 characters; a longer name (e.g.
+        # "Init 2026 - Open > 90 days Detail" is 33 chars) writes fine via
+        # openpyxl but produces an invalid workbook.xml that Excel flags as
+        # needing repair on open. Truncate defensively and de-dupe in case
+        # two long names collide after truncation.
+        raw_name = f"{sheet_name} Detail"
+        safe_name = raw_name[:31]
+        dedupe_i = 1
+        while safe_name in wb.sheetnames:
+            suffix = f"_{dedupe_i}"
+            safe_name = raw_name[: 31 - len(suffix)] + suffix
+            dedupe_i += 1
+        ws = wb.create_sheet(safe_name)
         ws.sheet_view.showGridLines = False
 
         for ci, col in enumerate(cols_to_show, start=1):
