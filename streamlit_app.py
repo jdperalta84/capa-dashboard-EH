@@ -27,17 +27,20 @@ OPEN_THRESHOLD_DAYS = 90
 # locations use different vocabulary for the same underlying categories, so
 # this list is a union of synonyms across all known formats. Confirmed
 # against the full observed Type taxonomy across all location exports:
-# Complaints, Non-Conformities (Major/Minor/plain), Incidents, and PT/
-# Proficiency-Testing Outliers count; Observations, Opportunities for
+# Complaints, Non-Conformities (Major/Minor/plain), Non-compliance,
+# Non-conformance, ISO 17025 Audits, Incidents, and PT/Proficiency-Testing
+# Outliers count; Observations, Opportunities for
 # Improvement, Recommendations, Points of attention/improvement, Risk,
 # and similar advisory-only categories are excluded.
 CAPA_TYPE_INCLUDE = [
     "Client Complaint", "Client complaint",
     "Customer Complaint", "Customer complaint",
     "Incident",
+    "ISO 17025 Audit",
     "Major Non-Conformity", "Major Nonconformity", "Major nonconformity",
     "Minor Non Conformity", "Minor Nonconformity", "Minor nonconformity",
     "Non-Conformity", "Nonconformity",
+    "Non-compliance", "Non-conformance",
     "PT Outlier", "PT Outlier (insignificant risk)",
     "Proficiency Testing Outlier",
     # "CAPA / Tasks" format (e.g. Mozambique, UK exports) synonyms:
