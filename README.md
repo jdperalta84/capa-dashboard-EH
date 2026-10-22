@@ -54,6 +54,22 @@ Other Type values are excluded, including observations, opportunities for improv
 
 If an archive sheet has no Type column, this filter is bypassed. Newer sheet-based imports assign CAR/PTO types and use their separate sheet-selection rules.
 
+## Temporary investigation exclusions
+
+The sidebar option **Exclude CAPAs under investigation** is **off by default**. Enable it to omit the 45 distinct CAPAs (49 investigation points) in the 22 October 2026 review.
+
+Exclusions match **location + CAPA number** after trimming whitespace and ignoring capitalization. They apply after location selection, before all metrics, charts, detail tables, and both Excel reports. The dashboard shows the number omitted and remaining for the selected locations.
+
+When enabled, downloaded filenames include `Excluding_Under_Investigation`. The workbook Dashboard and Summary identify the exclusion, and an **Excluded Records** sheet lists omitted records with their investigation reasons and original dates. Even if no selected records match, the report identifies the enabled option and shows zero omitted.
+
+The list is maintained in `investigation_exclusions.json`. Remove an entry once its investigation is resolved and the record is ready to count again. Investigation flags are not confirmed errors. This option does not change source records or date-parsing behavior.
+
+Run the exclusion matching tests from the repository folder:
+
+```bash
+python -m unittest discover -s tests
+```
+
 ## Calculation methods
 
 | Method | Closure date used |
@@ -106,4 +122,5 @@ The command-line calculators have separate logic and are not the web app entry p
 - **Counts differ between methods:** compare the main closure date with task completion dates.
 - **An average looks unexpected:** inspect missing notification dates, negative durations, and the selected closure method.
 
-There is currently no configured automated test suite or CI workflow in this repository. For calculation or import changes, verify representative exports in both methods and check the downloaded reports.
+Exclusion matching tests are in `tests/`; there is no CI workflow. For calculation or import changes, verify representative exports in both methods and check the downloaded reports.
+

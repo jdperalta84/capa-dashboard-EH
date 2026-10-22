@@ -14,6 +14,7 @@ from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
 import altair as alt
+from investigation_exclusions import apply_investigation_exclusions
 
 warnings.filterwarnings("ignore", category=UserWarning)
 
@@ -484,7 +485,14 @@ def compute_metrics(all_capas, method):
                 int((mask & init2026_open_gt90).sum()),
         })
 
-    df_location = pd.DataFrame(location_rows)
+    # Keep report columns available when every selected CAPA is excluded.
+    df_location = pd.DataFrame(location_rows, columns=[
+        "Location", "Avg Days to Close (2025)", "Closed 2025",
+        "Avg Days to Close (2026)", "Closed 2026", "Open",
+        f"Open > {OPEN_THRESHOLD_DAYS} days",
+        "Initiated 2026 — Avg Days to Complete", "Initiated 2026 — Completed",
+        f"Initiated 2026 — Open > {OPEN_THRESHOLD_DAYS} days",
+    ])
 
     # Detail DataFrames
     cols_detail = ["Location", "Number", "Date of notification",
@@ -518,7 +526,8 @@ def compute_metrics(all_capas, method):
 
 
 # ── Excel report builder ─────────────────────────────────────────────────────
-def build_excel_report(metrics, method):
+def build_excel_report(metrics, method, excluded_records=None,
+                       exclude_under_investigation=False):
     """Build the styled Excel workbook in memory and return bytes."""
     m = metrics
     df_location = m["df_location"]
@@ -534,6 +543,8 @@ def build_excel_report(metrics, method):
     init2026_open_gt90 = m["init2026_open_gt90"]
     avg_init2026 = m["avg_init2026"]
 
+    excluded_count = len(excluded_records) if excluded_records is not None else 0
+    exclusion_label = "Excludes CAPAs under investigation"
     is_taskdates = method == "taskdates"
     title_suffix = " — Task Date Priority" if is_taskdates else ""
 
@@ -556,6 +567,12 @@ def build_excel_report(metrics, method):
 
     dash.row_dimensions[2].height = 36
     dash.row_dimensions[3].height = 18
+    if exclude_under_investigation:
+        dash.merge_cells("B4:K4")
+        dash["B4"] = f"{exclusion_label} — {excluded_count} records omitted"
+        dash["B4"].font = bold_font(11)
+        dash["B4"].alignment = xleft(wrap=True)
+        dash.row_dimensions[4].height = 30
 
     def kpi_card(ws, label_row, val_row, col_start, col_end, label, value, bg_val=LIGHT_BLUE):
         col_s = get_column_letter(col_start)
@@ -721,6 +738,10 @@ def build_excel_report(metrics, method):
         ("Initiated 2026 — Still Open", init2026_open),
         (f"Initiated 2026 — Open > {OPEN_THRESHOLD_DAYS} Days", init2026_open_gt90),
     ]
+    summary_rows.extend([
+        ("Population", exclusion_label if exclude_under_investigation else "All eligible CAPAs"),
+        ("Records omitted under investigation", excluded_count),
+    ])
     for ri, (metric, value) in enumerate(summary_rows, start=2):
         fill = white_fill() if ri % 2 == 0 else alt_fill()
         for ci, val in enumerate([metric, value], start=1):
@@ -734,6 +755,9 @@ def build_excel_report(metrics, method):
     sum_ws.column_dimensions["A"].width = 36
     sum_ws.column_dimensions["B"].width = 16
     sum_ws.freeze_panes = "A2"
+    population_row = len(summary_rows)
+    sum_ws.cell(population_row, 2).alignment = xleft(wrap=True)
+    sum_ws.row_dimensions[population_row].height = 60
 
     # ── Logic Notes sheet ─────────────────────────────────────────────────────
     log_ws = wb.create_sheet("Logic Notes")
@@ -776,6 +800,13 @@ def build_excel_report(metrics, method):
                  "Only CAPAs whose 'Type' matches the selected categories are retained.", False),
         ]
 
+    if exclude_under_investigation:
+        logic_content.append((
+            "Temporary investigation exclusions",
+            f"{excluded_count} records omitted after location selection using location + CAPA number. "
+            "See Excluded Records for the omitted records and investigation reasons. "
+            "Review list dated 22 October 2026; a flag is not a confirmed error.", False,
+        ))
     logic_content += [
         ("HOW EACH METRIC IS CALCULATED", "", True),
         ("Avg days to close (2025)",
@@ -876,6 +907,37 @@ def build_excel_report(metrics, method):
         autofit(ws, max_w=40, min_w=10)
         ws.freeze_panes = "A2"
 
+    if exclude_under_investigation:
+        audit = wb.create_sheet("Excluded Records")
+        audit.sheet_view.showGridLines = False
+        audit_columns = ["Location", "Number", "Type", "Date of notification",
+                         "Date closed", "Effective closed date", "Status",
+                         "Investigation reason"]
+        audit.append(audit_columns)
+        for cell in audit[1]:
+            cell.fill = navy_fill()
+            cell.font = hdr_font()
+            cell.alignment = xcenter(wrap=True)
+        audit.row_dimensions[1].height = 30
+        if excluded_records is not None:
+            for values in excluded_records.reindex(columns=audit_columns).itertuples(index=False, name=None):
+                audit.append([
+                    "" if pd.isna(value) else
+                    value.to_pydatetime() if isinstance(value, pd.Timestamp) else value
+                    for value in values
+                ])
+        for row in audit.iter_rows(min_row=2):
+            for cell in row:
+                cell.font = body_font(10)
+                cell.alignment = xleft(wrap=True)
+                if cell.column in (4, 5, 6):
+                    cell.number_format = "YYYY-MM-DD"
+            audit.row_dimensions[row[0].row].height = 60
+        autofit(audit, max_w=32, min_w=16)
+        audit.column_dimensions["H"].width = 60
+        audit.freeze_panes = "C2"
+        audit.auto_filter.ref = audit.dimensions
+
     # Save to bytes
     buf = io.BytesIO()
     wb.save(buf)
@@ -902,6 +964,9 @@ if not uploaded_files:
     st.stop()
 
 all_capas, locations = load_data(uploaded_files)
+if all_capas.empty:
+    st.info("No eligible CAPAs were loaded from these files.")
+    st.stop()
 
 # Quick "what got loaded" line so the user can sanity-check sheet coverage.
 if not all_capas.empty and "Type" in all_capas.columns:
@@ -923,6 +988,13 @@ method = st.sidebar.radio(
     ),
 )
 
+exclude_under_investigation = st.sidebar.checkbox(
+    "Exclude CAPAs under investigation",
+    value=False,
+    help=("Temporarily omit the 45 CAPAs listed in the 22 October 2026 investigation review. "
+          "Matches location and CAPA number. Applies to metrics, charts and both Excel reports."),
+)
+
 selected_locations = st.sidebar.multiselect(
     "Filter by location",
     options=locations,
@@ -934,6 +1006,19 @@ if not selected_locations:
     st.stop()
 
 filtered = all_capas[all_capas["Location"].isin(selected_locations)].copy()
+filtered, excluded_records = apply_investigation_exclusions(
+    filtered, enabled=exclude_under_investigation
+)
+report_suffix = "_Excluding_Under_Investigation" if exclude_under_investigation else ""
+if exclude_under_investigation:
+    st.warning(
+        f"Excludes CAPAs under investigation — {len(excluded_records)} records omitted "
+        f"from the selected locations; {len(filtered)} records included."
+    )
+    with st.expander("View excluded records and investigation reasons"):
+        st.dataframe(excluded_records, use_container_width=True, hide_index=True)
+    if filtered.empty:
+        st.info("No CAPAs remain for the selected locations. The reports include the exclusion list.")
 metrics = compute_metrics(filtered, method)
 
 # ── KPI cards ─────────────────────────────────────────────────────────────────
@@ -1019,20 +1104,25 @@ dl1, dl2 = st.columns(2)
 
 with dl1:
     official_metrics = compute_metrics(filtered, "official")
-    official_bytes = build_excel_report(official_metrics, "official")
+    official_bytes = build_excel_report(
+        official_metrics, "official", excluded_records, exclude_under_investigation
+    )
     st.download_button(
         label="Download Official Report",
         data=official_bytes,
-        file_name="CAPA_Metrics_Report.xlsx",
+        file_name=f"CAPA_Metrics_Report{report_suffix}.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
 
 with dl2:
     taskdates_metrics = compute_metrics(filtered, "taskdates")
-    taskdates_bytes = build_excel_report(taskdates_metrics, "taskdates")
+    taskdates_bytes = build_excel_report(
+        taskdates_metrics, "taskdates", excluded_records, exclude_under_investigation
+    )
     st.download_button(
         label="Download Task Dates Report",
         data=taskdates_bytes,
-        file_name="CAPA_Metrics_Report_TaskDates.xlsx",
+        file_name=f"CAPA_Metrics_Report_TaskDates{report_suffix}.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
+
