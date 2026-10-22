@@ -1,0 +1,325 @@
+{
+  "review_date": "2026-10-22",
+  "source": "CAPA_Location_Investigation_Updated.xlsx",
+  "records": [
+    {
+      "location": "Antwerp",
+      "number": "CAPA-ANT0526",
+      "reasons": [
+        "Task completed before notification"
+      ]
+    },
+    {
+      "location": "Australia",
+      "number": "CAPA0075",
+      "reasons": [
+        "Closure date / status conflict"
+      ]
+    },
+    {
+      "location": "Australia",
+      "number": "CAPA0081",
+      "reasons": [
+        "Closure before notification",
+        "Task completed before notification"
+      ]
+    },
+    {
+      "location": "Australia",
+      "number": "CAPA0115",
+      "reasons": [
+        "Closed with unfinished tasks"
+      ]
+    },
+    {
+      "location": "Australia",
+      "number": "CAPA0123",
+      "reasons": [
+        "Task completed before notification"
+      ]
+    },
+    {
+      "location": "Australia",
+      "number": "CAPA0124",
+      "reasons": [
+        "Closed with unfinished tasks",
+        "Closure date / status conflict"
+      ]
+    },
+    {
+      "location": "Australia",
+      "number": "CAPA0125",
+      "reasons": [
+        "Task completed before notification"
+      ]
+    },
+    {
+      "location": "Greece",
+      "number": "CAPA0014",
+      "reasons": [
+        "Possible training / test record"
+      ]
+    },
+    {
+      "location": "Greece",
+      "number": "CAPA0015",
+      "reasons": [
+        "Possible training / test record"
+      ]
+    },
+    {
+      "location": "Italy",
+      "number": "CAPA0061",
+      "reasons": [
+        "CAPA number reused"
+      ]
+    },
+    {
+      "location": "Italy",
+      "number": "CAPA0062",
+      "reasons": [
+        "CAPA number reused"
+      ]
+    },
+    {
+      "location": "Italy",
+      "number": "CAPA0063",
+      "reasons": [
+        "CAPA number reused"
+      ]
+    },
+    {
+      "location": "Latvia",
+      "number": "CAPA0001",
+      "reasons": [
+        "Possible training / test record"
+      ]
+    },
+    {
+      "location": "Latvia",
+      "number": "CAPA0002",
+      "reasons": [
+        "Possible training / test record"
+      ]
+    },
+    {
+      "location": "Latvia",
+      "number": "CAPA0003",
+      "reasons": [
+        "Possible training / test record"
+      ]
+    },
+    {
+      "location": "Latvia",
+      "number": "CAPA0004",
+      "reasons": [
+        "Possible training / test record"
+      ]
+    },
+    {
+      "location": "Latvia",
+      "number": "CAPA0006",
+      "reasons": [
+        "Closure before notification"
+      ]
+    },
+    {
+      "location": "Latvia",
+      "number": "CAPA0007",
+      "reasons": [
+        "Closure before notification"
+      ]
+    },
+    {
+      "location": "Latvia",
+      "number": "CAPA0010",
+      "reasons": [
+        "Closure before notification"
+      ]
+    },
+    {
+      "location": "Morocco",
+      "number": "CAPA0144",
+      "reasons": [
+        "Task completed before notification"
+      ]
+    },
+    {
+      "location": "Morocco",
+      "number": "CAPA0149",
+      "reasons": [
+        "Task completed before notification"
+      ]
+    },
+    {
+      "location": "Morocco",
+      "number": "CAPA0150",
+      "reasons": [
+        "Closure date / status conflict"
+      ]
+    },
+    {
+      "location": "Morocco",
+      "number": "CAPA0202",
+      "reasons": [
+        "Task completed before notification"
+      ]
+    },
+    {
+      "location": "Singapore",
+      "number": "CAPA0120",
+      "reasons": [
+        "Closed with unfinished tasks"
+      ]
+    },
+    {
+      "location": "Singapore",
+      "number": "CAPA0168",
+      "reasons": [
+        "Task completed before notification"
+      ]
+    },
+    {
+      "location": "Spain",
+      "number": "CAPA0344",
+      "reasons": [
+        "Closure date / status conflict",
+        "Task completed before notification"
+      ]
+    },
+    {
+      "location": "Spain",
+      "number": "CAPA0396",
+      "reasons": [
+        "Closure date / status conflict"
+      ]
+    },
+    {
+      "location": "Spain",
+      "number": "CAPA0405",
+      "reasons": [
+        "Task completed before notification"
+      ]
+    },
+    {
+      "location": "Spain",
+      "number": "CAPA0424",
+      "reasons": [
+        "Task completed before notification"
+      ]
+    },
+    {
+      "location": "Sweden",
+      "number": "CAPA0092",
+      "reasons": [
+        "Closure date / status conflict"
+      ]
+    },
+    {
+      "location": "Sweden",
+      "number": "CAPA0118",
+      "reasons": [
+        "Task completed before notification"
+      ]
+    },
+    {
+      "location": "Sweden",
+      "number": "CAPA0119",
+      "reasons": [
+        "Task completed before notification"
+      ]
+    },
+    {
+      "location": "Sweden",
+      "number": "CAPA0120",
+      "reasons": [
+        "Task completed before notification"
+      ]
+    },
+    {
+      "location": "Sweden",
+      "number": "CAPA0121",
+      "reasons": [
+        "Task completed before notification"
+      ]
+    },
+    {
+      "location": "Sweden",
+      "number": "CAPA0122",
+      "reasons": [
+        "Task completed before notification"
+      ]
+    },
+    {
+      "location": "Sweden",
+      "number": "CAPA0124",
+      "reasons": [
+        "Task completed before notification"
+      ]
+    },
+    {
+      "location": "Sweden",
+      "number": "CAPA0125",
+      "reasons": [
+        "Task completed before notification"
+      ]
+    },
+    {
+      "location": "Sweden",
+      "number": "CAPA0126",
+      "reasons": [
+        "Task completed before notification"
+      ]
+    },
+    {
+      "location": "Sweden",
+      "number": "CAPA0127",
+      "reasons": [
+        "Task completed before notification"
+      ]
+    },
+    {
+      "location": "Thailand",
+      "number": "CAPA0020",
+      "reasons": [
+        "Possible training / test record"
+      ]
+    },
+    {
+      "location": "The Netherlands",
+      "number": "CAPA-RTC0890",
+      "reasons": [
+        "Task completed before notification"
+      ]
+    },
+    {
+      "location": "The Netherlands",
+      "number": "CAPA-RTC0908",
+      "reasons": [
+        "Closure date / status conflict"
+      ]
+    },
+    {
+      "location": "UAE",
+      "number": "CAPA0305",
+      "reasons": [
+        "Closure before notification",
+        "Task completed before notification"
+      ]
+    },
+    {
+      "location": "UAE",
+      "number": "CAPA0335",
+      "reasons": [
+        "Possible training / test record"
+      ]
+    },
+    {
+      "location": "UK",
+      "number": "CAPA0004",
+      "reasons": [
+        "Closed with unfinished tasks"
+      ]
+    }
+  ]
+}
